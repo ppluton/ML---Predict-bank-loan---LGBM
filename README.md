@@ -256,28 +256,18 @@ Train AUC : [XX.X]%
 Seuil Optimal : [X.XX] (vs 0.5)
 Amélioration seuil : [+X.X]%
 ```
-
----
-
-## 🔮 **Pistes d'Amélioration**
-
-1. **Features** : SHAP pour sélection auto, embeddings temporels
-2. **Modèles** : Stacking, NN, CatBoost
-3. **MLOps** : CI/CD GitHub Actions, monitoring production
-4. **Business** : A/B testing modèles, explainability LIME/SHAP
-
 ---
 
 ## 👨‍💻 **Auteur & Licence**
 
-**Auteur** : [Votre Nom]  
+**Auteur** : Pierre Pluton  
 **Formation** : OpenClassrooms AI Engineer 2026 - Projet OC6 MLOps  
 **Date** : Janvier 2026
 
 **Licence** : MIT License
 
 ```
-© 2026 [Votre Nom]. Tous droits réservés pour OpenClassrooms.
+© 2026 Pierre Pluton. Tous droits réservés pour OpenClassrooms.
 ```
 
 ---
