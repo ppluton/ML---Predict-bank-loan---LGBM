@@ -4,6 +4,8 @@ import json
 import sys
 import time
 from pathlib import Path
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 
 # Ajouter la racine du projet au path pour les imports
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -12,6 +14,9 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from evidently import Report
+from evidently.presets import DataDriftPreset
+
 from monitoring.drift import compute_drift_report, simulate_drift
 
 # --- Configuration ---
@@ -19,11 +24,16 @@ st.set_page_config(
     page_title="HC Credit Risk | Monitoring",
     layout="wide",
     page_icon="🏦",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
+try:
+    # Force l'affichage du menu/toolbar Streamlit si une config locale l'avait masque.
+    st.set_option("client.toolbarMode", "auto")
+except Exception:
+    pass
 
 ARTIFACTS_DIR = Path("artifacts")
-PREDICTIONS_LOG = Path("monitoring/predictions_log.csv")
+PREDICTIONS_LOG = Path("monitoring/predictions_log.jsonl")
 REFERENCE_DATA = Path("data/test_preprocessed.csv")
 
 # --- Theme premium bank ---
@@ -31,6 +41,9 @@ COLORS = {
     "primary": "#1B2A4A",
     "secondary": "#2C4A7C",
     "accent": "#C9A96E",
+    "text": "#1F2B44",
+    "muted": "#3D4A5C",  # Darkened for better contrast (was #51607A)
+    "chart_bg": "#FFFFFF",
     "success": "#1D6A4B",
     "danger": "#8B2D2D",
     "approved": "#1D6A4B",
@@ -44,9 +57,38 @@ st.markdown(
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
+    /* Base font settings for better readability */
     .stApp {{
         background-color: #F4F1EC;
         font-family: 'Inter', sans-serif;
+        color: {COLORS["text"]};
+        font-size: 15px;
+        line-height: 1.6;
+    }}
+
+    /* Ensure minimum font size for all text */
+    .stApp * {{
+        font-size: 14px !important;
+    }}
+
+    .stApp p, .stApp li, .stApp span {{
+        font-size: 15px !important;
+        line-height: 1.6 !important;
+    }}
+
+    [data-testid="stAppViewContainer"] {{
+        --text-color: {COLORS["text"]};
+        --secondary-text-color: {COLORS["muted"]};
+        color: {COLORS["text"]};
+    }}
+
+    header[data-testid="stHeader"] {{
+        background: {COLORS["primary"]};
+    }}
+
+    div[data-testid="stToolbar"] {{
+        visibility: visible !important;
+        opacity: 1 !important;
     }}
 
     .main-header {{
@@ -85,18 +127,18 @@ st.markdown(
         display: inline-block;
         padding: 0.3rem 1rem;
         border-radius: 20px;
-        font-size: 0.8rem;
+        font-size: 0.85rem;
         font-weight: 600;
         letter-spacing: 0.5px;
     }}
 
     .status-ok {{
-        background: rgba(29,106,75,0.12);
+        background: rgba(29,106,75,0.15);
         color: {COLORS["success"]};
     }}
 
     .status-alert {{
-        background: rgba(139,45,45,0.12);
+        background: rgba(139,45,45,0.15);
         color: {COLORS["danger"]};
     }}
 
@@ -109,7 +151,7 @@ st.markdown(
     }}
 
     div[data-testid="stMetric"] label {{
-        color: #8B95A5 !important;
+        color: {COLORS["muted"]} !important;
         font-size: 0.75rem !important;
         text-transform: uppercase;
         letter-spacing: 0.8px;
@@ -119,6 +161,96 @@ st.markdown(
     div[data-testid="stMetric"] div[data-testid="stMetricValue"] {{
         color: {COLORS["primary"]} !important;
         font-weight: 700 !important;
+        font-size: 1.4rem !important;
+    }}
+
+    div[data-testid="stWidgetLabel"] > label,
+    div[data-testid="stWidgetLabel"] > div,
+    div[data-testid="stWidgetLabel"] p {{
+        color: {COLORS["text"]} !important;
+        font-weight: 500;
+        font-size: 14px !important;
+    }}
+
+    div[role="radiogroup"] label,
+    div[role="radiogroup"] span,
+    div[data-baseweb="radio"] label,
+    div[data-baseweb="radio"] span,
+    div[data-testid="stRadio"] label,
+    div[data-testid="stRadio"] p {{
+        color: {COLORS["text"]} !important;
+        font-size: 14px !important;
+    }}
+
+    div[data-baseweb="input"] > div,
+    div[data-baseweb="base-input"] > div {{
+        background-color: #FFFFFF !important;
+        border: 1px solid rgba(27,42,74,0.18) !important;
+    }}
+
+    div[data-baseweb="input"] input,
+    div[data-baseweb="base-input"] input {{
+        color: {COLORS["text"]} !important;
+        -webkit-text-fill-color: {COLORS["text"]} !important;
+        font-size: 15px !important;
+    }}
+
+    div[data-testid="stNumberInput"] label,
+    div[data-testid="stNumberInput"] label p,
+    div[data-testid="stTextInput"] label,
+    div[data-testid="stTextInput"] label p,
+    div[data-testid="stTextArea"] label,
+    div[data-testid="stTextArea"] label p,
+    div[data-testid="stSelectbox"] label,
+    div[data-testid="stSelectbox"] label p,
+    div[data-testid="stSlider"] label,
+    div[data-testid="stSlider"] label p {{
+        color: {COLORS["text"]} !important;
+        font-size: 14px !important;
+    }}
+
+    div[data-testid="stMarkdownContainer"] p,
+    div[data-testid="stMarkdownContainer"] li {{
+        color: {COLORS["text"]};
+        font-size: 15px !important;
+        line-height: 1.65 !important;
+    }}
+
+    /* Better contrast for alerts/messages */
+    div[data-testid="stSuccess"] {{
+        background-color: #D1E7DD !important;
+        border: 1px solid #A3CFBB !important;
+    }}
+    div[data-testid="stSuccess"] p {{
+        color: #0F5132 !important;
+        font-weight: 600;
+    }}
+
+    div[data-testid="stInfo"] {{
+        background-color: #CFF4FC !important;
+        border: 1px solid #B6EFFB !important;
+    }}
+    div[data-testid="stInfo"] p {{
+        color: #055160 !important;
+        font-weight: 600;
+    }}
+
+    div[data-testid="stWarning"] {{
+        background-color: #FFF3CD !important;
+        border: 1px solid #FFECB5 !important;
+    }}
+    div[data-testid="stWarning"] p {{
+        color: #664d03 !important;
+        font-weight: 600;
+    }}
+
+    div[data-testid="stError"] {{
+        background-color: #F8D7DA !important;
+        border: 1px solid #F5C2C7 !important;
+    }}
+    div[data-testid="stError"] p {{
+        color: #842029 !important;
+        font-weight: 600;
     }}
 
     .stTabs [data-baseweb="tab-list"] {{
@@ -132,7 +264,7 @@ st.markdown(
     .stTabs [data-baseweb="tab"] {{
         border-radius: 8px;
         font-weight: 500;
-        font-size: 0.85rem;
+        font-size: 0.9rem;
         color: {COLORS["primary"]};
         padding: 0.6rem 1.2rem;
     }}
@@ -140,6 +272,40 @@ st.markdown(
     .stTabs [aria-selected="true"] {{
         background: {COLORS["primary"]} !important;
         color: white !important;
+    }}
+
+    .stTabs [aria-selected="true"] p,
+    .stTabs [aria-selected="true"] span,
+    .stTabs [aria-selected="true"] div {{
+        color: white !important;
+    }}
+
+    .doc-section h3,
+    .doc-section h3:hover,
+    .doc-section p,
+    .doc-section p:hover,
+    .doc-section li,
+    .doc-section li:hover,
+    .doc-section strong,
+    .doc-section strong:hover {{
+        color: {COLORS["text"]} !important;
+    }}
+
+    div[data-testid="stExpander"] summary,
+    div[data-testid="stExpander"] summary:hover {{
+        color: {COLORS["primary"]} !important;
+        background-color: white !important;
+    }}
+
+    div[data-testid="stExpander"] summary span,
+    div[data-testid="stExpander"] summary p,
+    div[data-testid="stExpander"] summary:hover span,
+    div[data-testid="stExpander"] summary:hover p {{
+        color: {COLORS["primary"]} !important;
+    }}
+
+    div[data-testid="stMarkdownContainer"] *:hover {{
+        color: inherit !important;
     }}
 
     .result-card {{
@@ -167,8 +333,8 @@ st.markdown(
     }}
 
     .result-card .proba {{
-        font-size: 1rem;
-        color: #8B95A5;
+        font-size: 1.05rem;
+        color: {COLORS["muted"]};
         margin-top: 0.3rem;
     }}
 
@@ -177,11 +343,11 @@ st.markdown(
         justify-content: space-between;
         padding: 0.6rem 0;
         border-bottom: 1px solid rgba(27,42,74,0.06);
-        font-size: 0.9rem;
+        font-size: 0.95rem;
     }}
 
     .info-row .info-label {{
-        color: #8B95A5;
+        color: {COLORS["muted"]};
         font-weight: 500;
     }}
 
@@ -210,20 +376,53 @@ st.markdown(
     }}
 
     .doc-section p, .doc-section li {{
-        color: #3D4F6F;
-        font-size: 0.92rem;
+        color: {COLORS["text"]};
+        font-size: 0.95rem;
     }}
 
     .doc-section code {{
-        background: #EDE9E0;
-        padding: 0.1rem 0.4rem;
+        background: #E5E1D8;
+        color: {COLORS["primary"]};
+        padding: 0.15rem 0.5rem;
         border-radius: 4px;
-        font-size: 0.85rem;
+        font-size: 0.9rem;
+        font-weight: 500;
     }}
 
     .stSidebar {{
         background: white;
         border-right: 1px solid rgba(27,42,74,0.08);
+    }}
+
+    /* Sidebar text contrast */
+    .stSidebar .stRadio > label,
+    .stSidebar .stSelectbox > label,
+    .stSidebar p,
+    .stSidebar li {{
+        color: {COLORS["text"]} !important;
+    }}
+
+    div[data-testid="stExpander"] {{
+        background: white;
+        border: 1px solid rgba(27,42,74,0.08);
+        border-radius: 12px;
+    }}
+
+    div[data-testid="stExpander"] summary {{
+        color: {COLORS["primary"]};
+        font-weight: 600;
+        font-size: 15px;
+    }}
+
+    /* Button text contrast */
+    .stButton > button {{
+        font-weight: 600;
+        font-size: 15px;
+    }}
+
+    /* DataFrame/table styling */
+    .stDataFrame {{
+        font-size: 14px !important;
     }}
     </style>
     """,
@@ -249,11 +448,35 @@ THRESHOLD = metadata.get("optimal_threshold", 0.494)
 
 PLOTLY_LAYOUT = dict(
     paper_bgcolor="rgba(0,0,0,0)",
-    plot_bgcolor="rgba(0,0,0,0)",
-    font=dict(family="Inter, sans-serif", color=COLORS["primary"], size=13),
-    margin=dict(l=40, r=20, t=50, b=40),
-    xaxis=dict(gridcolor="rgba(27,42,74,0.06)", zerolinecolor="rgba(27,42,74,0.1)"),
-    yaxis=dict(gridcolor="rgba(27,42,74,0.06)", zerolinecolor="rgba(27,42,74,0.1)"),
+    plot_bgcolor=COLORS["chart_bg"],
+    font=dict(family="Inter, sans-serif", color=COLORS["text"], size=14),
+    hoverlabel=dict(bgcolor="white", font=dict(color=COLORS["text"], size=13)),
+    margin=dict(l=50, r=20, t=50, b=50),
+    xaxis=dict(
+        gridcolor="rgba(27,42,74,0.08)",
+        zerolinecolor="rgba(27,42,74,0.15)",
+        title=dict(font=dict(color=COLORS["text"], size=13, weight=600)),
+        tickfont=dict(color=COLORS["muted"], size=12),
+        automargin=True,
+        linewidth=1,
+        linecolor="rgba(27,42,74,0.15)",
+    ),
+    yaxis=dict(
+        gridcolor="rgba(27,42,74,0.08)",
+        zerolinecolor="rgba(27,42,74,0.15)",
+        title=dict(font=dict(color=COLORS["text"], size=13, weight=600)),
+        tickfont=dict(color=COLORS["muted"], size=12),
+        automargin=True,
+        linewidth=1,
+        linecolor="rgba(27,42,74,0.15)",
+    ),
+)
+
+PLOTLY_LEGEND_STYLE = dict(
+    bgcolor="rgba(255,255,255,0.88)",
+    bordercolor="rgba(27,42,74,0.12)",
+    borderwidth=1,
+    font=dict(color=COLORS["text"], size=12),
 )
 
 
@@ -268,9 +491,104 @@ def load_model():
     return model, feature_names
 
 
+@st.cache_data(ttl=20, show_spinner=False)
+def check_api_health(base_url: str, timeout_s: float = 2.5) -> dict:
+    """Teste les endpoints principaux de l'API et retourne un statut synthétique."""
+    base = base_url.rstrip("/")
+    endpoints = {
+        "health": "/health",
+        "model_info": "/model-info",
+    }
+
+    results = {}
+    for name, path in endpoints.items():
+        url = f"{base}{path}"
+        start = time.perf_counter()
+        try:
+            req = Request(url=url, method="GET")
+            with urlopen(req, timeout=timeout_s) as resp:  # nosec: B310 - URL utilisateur attendue
+                status_code = resp.getcode()
+                elapsed_ms = (time.perf_counter() - start) * 1000
+                body = resp.read()
+                payload = {}
+                if body:
+                    try:
+                        payload = json.loads(body.decode("utf-8"))
+                    except Exception:
+                        payload = {}
+                results[name] = {
+                    "ok": 200 <= status_code < 300,
+                    "status_code": status_code,
+                    "latency_ms": elapsed_ms,
+                    "payload": payload,
+                    "error": "",
+                }
+        except URLError as exc:
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            results[name] = {
+                "ok": False,
+                "status_code": None,
+                "latency_ms": elapsed_ms,
+                "payload": {},
+                "error": str(exc.reason) if hasattr(exc, "reason") else str(exc),
+            }
+        except Exception as exc:
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            results[name] = {
+                "ok": False,
+                "status_code": None,
+                "latency_ms": elapsed_ms,
+                "payload": {},
+                "error": str(exc),
+            }
+
+    n_up = sum(1 for r in results.values() if r["ok"])
+    api_up = results.get("health", {}).get("ok", False)
+    return {
+        "api_up": api_up,
+        "n_up": n_up,
+        "n_total": len(endpoints),
+        "results": results,
+    }
+
+
+# === Documentation repliable (au-dessus des onglets) ===
+with st.expander(
+    "Guide du dashboard: contexte, objectifs et lecture des onglets", expanded=False
+):
+    st.markdown(
+        f"""
+        <div class="doc-section">
+            <h3>Pourquoi cette application</h3>
+            <p>
+                Cette interface centralise le <strong>scoring credit</strong> et le
+                <strong>monitoring ML</strong> pour suivre la qualite des decisions en production.
+                L'objectif est de donner aux equipes metier et data un meme point d'observation:
+                prediction client, distribution des scores, performance API et data drift.
+            </p>
+            <p>
+                Contexte metier: le modele estime la probabilite de defaut. Si la probabilite est
+                superieure au seuil de decision (<strong>{THRESHOLD:.3f}</strong>), la demande est
+                classee <strong>REFUSED</strong>, sinon <strong>APPROVED</strong>.
+            </p>
+        </div>
+        <div class="doc-section">
+            <h3>Comment lire les onglets</h3>
+            <ul>
+                <li><strong>Prediction</strong> : simulation d'un scoring client (ID existant ou saisie manuelle).</li>
+                <li><strong>Scores & Decisions</strong> : distribution des probabilites, taux de refus, volume de decisions.</li>
+                <li><strong>Performance API</strong> : suivi de latence (moyenne, P50, P95, max) et tendance temporelle.</li>
+                <li><strong>Data Drift</strong> : comparaison reference/production pour detecter les derivees de features.</li>
+                <li><strong>Modele</strong> : recapitulatif du modele, du seuil optimal et des parametres metier.</li>
+            </ul>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
 # === TABS ===
-tab_predict, tab_scores, tab_perf, tab_drift, tab_model, tab_doc = st.tabs(
-    ["Prediction", "Scores & Decisions", "Performance API", "Data Drift", "Modele", "Documentation"]
+tab_predict, tab_scores, tab_perf, tab_drift, tab_model = st.tabs(
+    ["Prediction", "Scores & Decisions", "Performance API", "Data Drift", "Modele"]
 )
 
 # ============================================================
@@ -280,6 +598,11 @@ with tab_predict:
     st.markdown(
         '<div class="section-title">Scoring Client</div>',
         unsafe_allow_html=True,
+    )
+    st.markdown(
+        f"Simulez une **decision de credit** pour un client. Le modele calcule une probabilite "
+        f"de defaut de paiement : si elle depasse le seuil de **{THRESHOLD:.3f}**, la demande est "
+        f"refusee. La jauge visualise ou se situe le score par rapport au seuil."
     )
 
     col_form, col_result = st.columns([1.2, 1])
@@ -318,7 +641,9 @@ with tab_predict:
             else:
                 st.warning("Fichier test_preprocessed.csv non disponible.")
         else:
-            st.markdown("Saisissez les features au format `NOM: valeur` (une par ligne) :")
+            st.markdown(
+                "Saisissez les features au format `NOM: valeur` (une par ligne) :"
+            )
             manual_input = st.text_area(
                 "Features (une par ligne)",
                 value="AMT_CREDIT: 0.5\nAMT_ANNUITY: -0.3\nEXT_SOURCE_2: 0.7",
@@ -334,7 +659,9 @@ with tab_predict:
             if client_features:
                 st.info(f"{len(client_features)} features saisies")
 
-        predict_btn = st.button("Lancer le scoring", type="primary", use_container_width=True)
+        predict_btn = st.button(
+            "Lancer le scoring", type="primary", use_container_width=True
+        )
 
     with col_result:
         if predict_btn and client_features:
@@ -362,35 +689,37 @@ with tab_predict:
                 unsafe_allow_html=True,
             )
 
-            fig_gauge = go.Figure(go.Indicator(
-                mode="gauge+number",
-                value=proba,
-                number=dict(
-                    font=dict(size=36, color=COLORS["primary"]),
-                    valueformat=".4f",
-                ),
-                gauge=dict(
-                    axis=dict(range=[0, 1], tickfont=dict(size=12)),
-                    bar=dict(color=color, thickness=0.3),
-                    bgcolor="white",
-                    steps=[
-                        dict(range=[0, THRESHOLD], color="rgba(29,106,75,0.1)"),
-                        dict(range=[THRESHOLD, 1], color="rgba(139,45,45,0.1)"),
-                    ],
-                    threshold=dict(
-                        line=dict(color=COLORS["accent"], width=3),
-                        thickness=0.8,
-                        value=THRESHOLD,
+            fig_gauge = go.Figure(
+                go.Indicator(
+                    mode="gauge+number",
+                    value=proba,
+                    number=dict(
+                        font=dict(size=36, color=COLORS["primary"]),
+                        valueformat=".4f",
                     ),
-                ),
-            ))
+                    gauge=dict(
+                        axis=dict(range=[0, 1], tickfont=dict(size=12)),
+                        bar=dict(color=color, thickness=0.3),
+                        bgcolor="white",
+                        steps=[
+                            dict(range=[0, THRESHOLD], color="rgba(29,106,75,0.1)"),
+                            dict(range=[THRESHOLD, 1], color="rgba(139,45,45,0.1)"),
+                        ],
+                        threshold=dict(
+                            line=dict(color=COLORS["accent"], width=3),
+                            thickness=0.8,
+                            value=THRESHOLD,
+                        ),
+                    ),
+                )
+            )
             fig_gauge.update_layout(
                 height=250,
                 margin=dict(l=30, r=30, t=30, b=10),
                 paper_bgcolor="rgba(0,0,0,0)",
                 font=dict(family="Inter, sans-serif"),
             )
-            st.plotly_chart(fig_gauge, width="stretch")
+            st.plotly_chart(fig_gauge, use_container_width=True)
 
         elif predict_btn:
             st.warning("Aucune feature chargee. Verifiez l'identifiant ou la saisie.")
@@ -399,8 +728,15 @@ with tab_predict:
 # TAB : Distribution des scores
 # ============================================================
 with tab_scores:
+    st.markdown(
+        "Vue d'ensemble des **predictions passees** enregistrees par l'API. "
+        "L'histogramme montre comment les scores de probabilite se repartissent entre "
+        "clients approuves (en vert, sous le seuil) et refuses (en rouge, au-dessus). "
+        "Le camembert resume la proportion globale, et la courbe temporelle permet de "
+        "detecter des variations de volume inhabituelles."
+    )
     if PREDICTIONS_LOG.exists():
-        logs = pd.read_csv(PREDICTIONS_LOG)
+        logs = pd.read_json(PREDICTIONS_LOG, lines=True)
 
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("Predictions", f"{len(logs):,}")
@@ -417,29 +753,48 @@ with tab_scores:
         approved = logs[logs["prediction"] == 0]["probability"]
         refused = logs[logs["prediction"] == 1]["probability"]
 
-        fig.add_trace(go.Histogram(
-            x=approved, nbinsx=40, name="Approved",
-            marker_color=COLORS["approved"], opacity=0.75,
-        ))
-        fig.add_trace(go.Histogram(
-            x=refused, nbinsx=40, name="Refused",
-            marker_color=COLORS["refused"], opacity=0.75,
-        ))
+        fig.add_trace(
+            go.Histogram(
+                x=approved,
+                nbinsx=40,
+                name="Approved",
+                marker_color=COLORS["approved"],
+                opacity=0.75,
+            )
+        )
+        fig.add_trace(
+            go.Histogram(
+                x=refused,
+                nbinsx=40,
+                name="Refused",
+                marker_color=COLORS["refused"],
+                opacity=0.75,
+            )
+        )
         fig.add_vline(
-            x=THRESHOLD, line_dash="dash", line_color=COLORS["accent"], line_width=2,
+            x=THRESHOLD,
+            line_dash="dash",
+            line_color=COLORS["accent"],
+            line_width=2,
             annotation_text=f"  Seuil ({THRESHOLD:.3f})",
             annotation_position="top right",
-            annotation_font=dict(color=COLORS["accent"], size=12),
+            annotation_font=dict(color=COLORS["text"], size=12),
         )
         fig.update_layout(
             barmode="overlay",
             xaxis_title="Probabilite de defaut",
             yaxis_title="Nombre de predictions",
-            legend=dict(orientation="h", y=1.12, x=0.5, xanchor="center"),
+            legend=dict(
+                **PLOTLY_LEGEND_STYLE,
+                orientation="h",
+                y=1.12,
+                x=0.5,
+                xanchor="center",
+            ),
             height=400,
             **PLOTLY_LAYOUT,
         )
-        st.plotly_chart(fig, width="stretch")
+        st.plotly_chart(fig, use_container_width=True)
 
         col_a, col_b = st.columns(2)
         with col_a:
@@ -449,21 +804,29 @@ with tab_scores:
             )
             n_approved = int((logs["prediction"] == 0).sum())
             n_refused = int((logs["prediction"] == 1).sum())
-            fig_pie = go.Figure(data=[go.Pie(
-                labels=["Approved", "Refused"],
-                values=[n_approved, n_refused],
-                marker=dict(colors=[COLORS["approved"], COLORS["refused"]]),
-                hole=0.55,
-                textinfo="percent+label",
-                textfont=dict(size=14, color="white"),
-                insidetextorientation="horizontal",
-            )])
+            fig_pie = go.Figure(
+                data=[
+                    go.Pie(
+                        labels=["Approved", "Refused"],
+                        values=[n_approved, n_refused],
+                        marker=dict(colors=[COLORS["approved"], COLORS["refused"]]),
+                        hole=0.55,
+                        textinfo="percent+label",
+                        textfont=dict(size=13, color=COLORS["text"]),
+                        insidetextorientation="horizontal",
+                    )
+                ]
+            )
             fig_pie.update_layout(
                 showlegend=False,
                 height=350,
-                **{k: v for k, v in PLOTLY_LAYOUT.items() if k not in ("xaxis", "yaxis")},
+                **{
+                    k: v
+                    for k, v in PLOTLY_LAYOUT.items()
+                    if k not in ("xaxis", "yaxis")
+                },
             )
-            st.plotly_chart(fig_pie, width="stretch")
+            st.plotly_chart(fig_pie, use_container_width=True)
 
         with col_b:
             st.markdown(
@@ -478,12 +841,16 @@ with tab_scores:
             )
             if len(logs_hourly) > 1:
                 fig_time = go.Figure()
-                fig_time.add_trace(go.Scatter(
-                    x=logs_hourly.index, y=logs_hourly["count"],
-                    mode="lines+markers", name="Volume",
-                    line=dict(color=COLORS["secondary"], width=2),
-                    marker=dict(size=5),
-                ))
+                fig_time.add_trace(
+                    go.Scatter(
+                        x=logs_hourly.index,
+                        y=logs_hourly["count"],
+                        mode="lines+markers",
+                        name="Volume",
+                        line=dict(color=COLORS["secondary"], width=2),
+                        marker=dict(size=5),
+                    )
+                )
                 fig_time.update_layout(
                     xaxis_title="",
                     yaxis_title="Predictions / heure",
@@ -491,7 +858,7 @@ with tab_scores:
                     showlegend=False,
                     **PLOTLY_LAYOUT,
                 )
-                st.plotly_chart(fig_time, width="stretch")
+                st.plotly_chart(fig_time, use_container_width=True)
             else:
                 st.info("Donnees temporelles insuffisantes.")
     else:
@@ -501,8 +868,87 @@ with tab_scores:
 # TAB : Performance API
 # ============================================================
 with tab_perf:
+    st.markdown(
+        "Cet onglet verifie en temps reel si l'**API de scoring** est operationnelle. "
+        "Il teste les endpoints `/health` et `/model-info`, puis affiche les metriques de "
+        "**latence d'inference** (temps que met le modele a repondre). "
+        "P50 = moitie des requetes sont plus rapides, P95 = 95% des requetes sont plus rapides. "
+        "Si l'API n'est pas lancee, les statuts afficheront KO — c'est normal."
+    )
+    st.markdown(
+        '<div class="section-title">Sante API & Endpoints</div>',
+        unsafe_allow_html=True,
+    )
+    api_col, timeout_col = st.columns([3, 1])
+    with api_col:
+        api_base_url = st.text_input(
+            "URL de l'API a monitorer",
+            value="http://localhost:8000",
+            help="Exemple: http://localhost:8000",
+        )
+    with timeout_col:
+        timeout_s = st.number_input(
+            "Timeout (s)",
+            min_value=1.0,
+            max_value=10.0,
+            value=2.5,
+            step=0.5,
+        )
+
+    health = check_api_health(api_base_url, timeout_s=timeout_s)
+    health_result = health["results"].get("health", {})
+    model_result = health["results"].get("model_info", {})
+    api_status = "UP" if health["api_up"] else "DOWN"
+    api_latency = health_result.get("latency_ms")
+
+    col_h1, col_h2, col_h3, col_h4 = st.columns(4)
+    col_h1.metric(
+        "Statut API",
+        api_status,
+        f"{api_latency:.0f} ms" if isinstance(api_latency, (int, float)) else "n/a",
+    )
+    col_h2.metric(
+        "Endpoint /health",
+        "OK" if health_result.get("ok") else "KO",
+        (
+            f"HTTP {health_result.get('status_code')}"
+            if health_result.get("status_code") is not None
+            else "indisponible"
+        ),
+    )
+    col_h3.metric(
+        "Endpoint /model-info",
+        "OK" if model_result.get("ok") else "KO",
+        (
+            f"HTTP {model_result.get('status_code')}"
+            if model_result.get("status_code") is not None
+            else "indisponible"
+        ),
+    )
+    col_h4.metric("Endpoints UP", f"{health['n_up']}/{health['n_total']}")
+
+    if health["api_up"]:
+        payload = health_result.get("payload", {})
+        model_loaded = payload.get("model_loaded")
+        n_features = payload.get("n_features")
+        threshold = payload.get("threshold")
+        st.success(
+            "API operationnelle"
+            f" | model_loaded={model_loaded}"
+            f" | n_features={n_features}"
+            f" | threshold={threshold}"
+        )
+    else:
+        err = health_result.get("error") or "Connexion impossible"
+        st.warning(f"API indisponible sur {api_base_url}. Detail: {err}")
+
+    st.markdown(
+        '<div class="section-title">Performance des predictions (logs)</div>',
+        unsafe_allow_html=True,
+    )
+
     if PREDICTIONS_LOG.exists():
-        logs = pd.read_csv(PREDICTIONS_LOG)
+        logs = pd.read_json(PREDICTIONS_LOG, lines=True)
 
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("Latence moyenne", f"{logs['inference_time_ms'].mean():.1f} ms")
@@ -516,16 +962,22 @@ with tab_perf:
         )
 
         fig_lat = go.Figure()
-        fig_lat.add_trace(go.Histogram(
-            x=logs["inference_time_ms"], nbinsx=40,
-            marker_color=COLORS["secondary"], opacity=0.8,
-        ))
+        fig_lat.add_trace(
+            go.Histogram(
+                x=logs["inference_time_ms"],
+                nbinsx=40,
+                marker_color=COLORS["secondary"],
+                opacity=0.8,
+            )
+        )
         p95 = logs["inference_time_ms"].quantile(0.95)
         fig_lat.add_vline(
-            x=p95, line_dash="dash", line_color=COLORS["danger"],
+            x=p95,
+            line_dash="dash",
+            line_color=COLORS["danger"],
             annotation_text=f"  P95 ({p95:.1f} ms)",
             annotation_position="top right",
-            annotation_font=dict(size=12),
+            annotation_font=dict(size=12, color=COLORS["text"]),
         )
         fig_lat.update_layout(
             xaxis_title="Temps d'inference (ms)",
@@ -534,7 +986,7 @@ with tab_perf:
             height=400,
             **PLOTLY_LAYOUT,
         )
-        st.plotly_chart(fig_lat, width="stretch")
+        st.plotly_chart(fig_lat, use_container_width=True)
 
         st.markdown(
             '<div class="section-title">Latence dans le temps</div>',
@@ -544,16 +996,21 @@ with tab_perf:
         logs["timestamp"] = pd.to_datetime(logs["timestamp"])
         mean_lat = logs["inference_time_ms"].mean()
         fig_ts = go.Figure()
-        fig_ts.add_trace(go.Scatter(
-            x=logs["timestamp"], y=logs["inference_time_ms"],
-            mode="markers",
-            marker=dict(color=COLORS["secondary"], size=4, opacity=0.4),
-        ))
+        fig_ts.add_trace(
+            go.Scatter(
+                x=logs["timestamp"],
+                y=logs["inference_time_ms"],
+                mode="markers",
+                marker=dict(color=COLORS["secondary"], size=4, opacity=0.4),
+            )
+        )
         fig_ts.add_hline(
-            y=mean_lat, line_dash="dash", line_color=COLORS["accent"],
+            y=mean_lat,
+            line_dash="dash",
+            line_color=COLORS["accent"],
             annotation_text=f"  Moyenne : {mean_lat:.1f} ms",
             annotation_position="top left",
-            annotation_font=dict(size=12, color=COLORS["accent"]),
+            annotation_font=dict(size=12, color=COLORS["text"]),
         )
         fig_ts.update_layout(
             xaxis_title="",
@@ -562,14 +1019,23 @@ with tab_perf:
             height=400,
             **PLOTLY_LAYOUT,
         )
-        st.plotly_chart(fig_ts, width="stretch")
+        st.plotly_chart(fig_ts, use_container_width=True)
     else:
-        st.info("En attente de donnees de performance.")
+        st.info(
+            "En attente de donnees de performance (fichier predictions_log.jsonl absent)."
+        )
 
 # ============================================================
 # TAB : Data Drift
 # ============================================================
 with tab_drift:
+    st.markdown(
+        "Le **data drift** mesure si les donnees en production different des donnees d'entrainement. "
+        "Si les features changent significativement, le modele risque de perdre en fiabilite. "
+        "Ici on utilise le **test de Kolmogorov-Smirnov (KS)** : plus la statistique KS est elevee, "
+        "plus la distribution a change. Les barres rouges indiquent un drift detecte (p-value < 0.05). "
+        "Utilisez la sidebar a gauche pour simuler differents types de drift et observer leur impact."
+    )
     if REFERENCE_DATA.exists():
         st.sidebar.markdown("### Simulation du Drift")
 
@@ -631,32 +1097,36 @@ with tab_drift:
         )
 
         fig_ks = go.Figure()
-        fig_ks.add_trace(go.Bar(
-            y=display_report["feature_short"],
-            x=display_report["ks_statistic"],
-            orientation="h",
-            marker_color=[
-                COLORS["danger"] if d else COLORS["secondary"]
-                for d in display_report["drift_detected"]
-            ],
-            opacity=0.85,
-            text=[f"{v:.3f}" for v in display_report["ks_statistic"]],
-            textposition="outside",
-            textfont=dict(size=11),
-            hovertext=display_report["feature"],
-        ))
+        fig_ks.add_trace(
+            go.Bar(
+                y=display_report["feature_short"],
+                x=display_report["ks_statistic"],
+                orientation="h",
+                marker_color=[
+                    COLORS["danger"] if d else COLORS["secondary"]
+                    for d in display_report["drift_detected"]
+                ],
+                opacity=0.85,
+                text=[f"{v:.3f}" for v in display_report["ks_statistic"]],
+                textposition="outside",
+                textfont=dict(size=11, color=COLORS["text"]),
+                hovertext=display_report["feature"],
+            )
+        )
         fig_ks.update_layout(
+            margin=dict(l=210, r=40, t=50, b=40),
             yaxis=dict(
                 autorange="reversed",
                 gridcolor="rgba(27,42,74,0.06)",
-                tickfont=dict(size=11),
+                tickfont=dict(size=11, color=COLORS["text"]),
+                automargin=True,
             ),
             xaxis_title="KS Statistic",
             height=max(400, n_total * 28),
             showlegend=False,
-            **{k: v for k, v in PLOTLY_LAYOUT.items() if k != "yaxis"},
+            **{k: v for k, v in PLOTLY_LAYOUT.items() if k not in ("yaxis", "margin")},
         )
-        st.plotly_chart(fig_ks, width="stretch")
+        st.plotly_chart(fig_ks, use_container_width=True)
 
         # Distributions comparees top 3
         top_drifted = drift_report[drift_report["drift_detected"]].head(3)
@@ -670,14 +1140,24 @@ with tab_drift:
                 feat = row["feature"]
                 with cols[idx]:
                     fig_comp = go.Figure()
-                    fig_comp.add_trace(go.Histogram(
-                        x=ref_data[feat], name="Reference",
-                        opacity=0.6, marker_color=COLORS["chart_ref"], nbinsx=30,
-                    ))
-                    fig_comp.add_trace(go.Histogram(
-                        x=prod_data[feat], name="Production",
-                        opacity=0.6, marker_color=COLORS["chart_prod"], nbinsx=30,
-                    ))
+                    fig_comp.add_trace(
+                        go.Histogram(
+                            x=ref_data[feat],
+                            name="Reference",
+                            opacity=0.6,
+                            marker_color=COLORS["chart_ref"],
+                            nbinsx=30,
+                        )
+                    )
+                    fig_comp.add_trace(
+                        go.Histogram(
+                            x=prod_data[feat],
+                            name="Production",
+                            opacity=0.6,
+                            marker_color=COLORS["chart_prod"],
+                            nbinsx=30,
+                        )
+                    )
                     short_name = feat[:20] + "..." if len(feat) > 20 else feat
                     fig_comp.update_layout(
                         title=dict(
@@ -686,18 +1166,81 @@ with tab_drift:
                                 f"<span style='font-size:11px;color:#8B95A5;'>"
                                 f"KS = {row['ks_statistic']:.3f}</span>"
                             ),
-                            font=dict(size=13),
+                            font=dict(size=13, color=COLORS["text"]),
                         ),
                         barmode="overlay",
                         height=300,
                         showlegend=idx == 0,
-                        legend=dict(orientation="h", y=1.2, font=dict(size=11)),
+                        legend=dict(
+                            **{k: v for k, v in PLOTLY_LEGEND_STYLE.items() if k != "font"},
+                            orientation="h",
+                            y=1.2,
+                            font=dict(size=11, color=COLORS["text"]),
+                        ),
                         margin=dict(l=30, r=10, t=70, b=30),
                         paper_bgcolor="rgba(0,0,0,0)",
-                        plot_bgcolor="rgba(0,0,0,0)",
-                        font=dict(family="Inter, sans-serif", size=11),
+                        plot_bgcolor=COLORS["chart_bg"],
+                        hoverlabel=dict(
+                            bgcolor="white", font=dict(color=COLORS["text"])
+                        ),
+                        font=dict(
+                            family="Inter, sans-serif", size=11, color=COLORS["text"]
+                        ),
+                        xaxis=dict(
+                            title=dict(font=dict(color=COLORS["text"])),
+                        ),
+                        yaxis=dict(
+                            title=dict(font=dict(color=COLORS["text"])),
+                            tickfont=dict(color=COLORS["muted"], size=10),
+                        ),
                     )
-                    st.plotly_chart(fig_comp, width="stretch")
+                    st.plotly_chart(fig_comp, use_container_width=True)
+
+        # --- Rapport Evidently AI ---
+        st.markdown(
+            '<div class="section-title">Rapport Evidently AI</div>',
+            unsafe_allow_html=True,
+        )
+
+        evidently_mode = st.radio(
+            "Donnees a analyser",
+            ["Reference (train) vs Test reel", "Reference vs Drift simule (ci-dessus)"],
+            horizontal=True,
+            help="Le mode 'Test reel' compare les donnees d'entrainement aux donnees de test."
+            " Le mode 'Drift simule' utilise la simulation configuree dans la sidebar.",
+        )
+
+        if st.button("Generer le rapport Evidently", type="primary"):
+            with st.spinner("Generation du rapport Evidently..."):
+                import webbrowser
+
+                if evidently_mode.startswith("Reference (train) vs Test"):
+                    # Charger les vraies donnees de test
+                    test_data = pd.read_csv(
+                        Path("data/test_preprocessed.csv"), nrows=n_samples
+                    )
+                    if "SK_ID_CURR" in test_data.columns:
+                        test_data = test_data.drop("SK_ID_CURR", axis=1)
+                    # Colonnes communes entre ref et test
+                    common = sorted(
+                        set(ref_data.columns) & set(test_data.columns)
+                    )
+                    ev_ref = ref_data[common]
+                    ev_cur = test_data[common]
+                else:
+                    # Utiliser les donnees simulees
+                    ev_ref = ref_data
+                    ev_cur = prod_data
+
+                evidently_report = Report([DataDriftPreset()])
+                evidently_snapshot = evidently_report.run(ev_ref, ev_cur)
+
+                report_path = Path("monitoring/drift_report_evidently.html")
+                evidently_snapshot.save_html(str(report_path))
+                webbrowser.open(f"file://{report_path.resolve()}")
+                st.success(
+                    f"Rapport ouvert dans le navigateur ({report_path.resolve()})"
+                )
     else:
         st.info("Fichier de reference non disponible.")
 
@@ -705,6 +1248,12 @@ with tab_drift:
 # TAB : Info Modele
 # ============================================================
 with tab_model:
+    st.markdown(
+        "Recapitulatif du modele deploye et de ses parametres metier. "
+        "Le **seuil optimal** a ete calibre pour minimiser le cout metier : un faux negatif "
+        "(client defaillant classe comme bon) coute plus cher qu'un faux positif "
+        "(bon client refuse a tort). Le ratio des couts FN/FP reflete cette asymetrie."
+    )
     col1, col2 = st.columns(2)
 
     with col1:
@@ -715,7 +1264,10 @@ with tab_model:
         info_perf = [
             ("Modele", metadata.get("best_model_name", "N/A")),
             ("Seuil optimal", f"{metadata.get('optimal_threshold', 0):.4f}"),
-            ("Business Cost (optimal)", f"{metadata.get('business_cost_optimal', 0):.4f}"),
+            (
+                "Business Cost (optimal)",
+                f"{metadata.get('business_cost_optimal', 0):.4f}",
+            ),
             ("Nombre de features", str(metadata.get("n_features", "N/A"))),
         ]
         for label, value in info_perf:
@@ -723,7 +1275,7 @@ with tab_model:
                 f'<div class="info-row">'
                 f'<span class="info-label">{label}</span>'
                 f'<span class="info-value">{value}</span>'
-                f'</div>',
+                f"</div>",
                 unsafe_allow_html=True,
             )
 
@@ -739,7 +1291,10 @@ with tab_model:
         info_biz = [
             ("Cout Faux Negatif (FN)", f"{metadata.get('cost_fn', 'N/A')}x"),
             ("Cout Faux Positif (FP)", f"{metadata.get('cost_fp', 'N/A')}x"),
-            ("Echantillon d'entrainement", f"{metadata.get('n_train_samples', 0):,} clients"),
+            (
+                "Echantillon d'entrainement",
+                f"{metadata.get('n_train_samples', 0):,} clients",
+            ),
             ("Taux de defaut historique", f"{default_rate:.2%}"),
         ]
         for label, value in info_biz:
@@ -747,130 +1302,10 @@ with tab_model:
                 f'<div class="info-row">'
                 f'<span class="info-label">{label}</span>'
                 f'<span class="info-value">{value}</span>'
-                f'</div>',
+                f"</div>",
                 unsafe_allow_html=True,
             )
 
     st.markdown("")
     with st.expander("Configuration complete (JSON)"):
         st.json(metadata)
-
-# ============================================================
-# TAB : Documentation
-# ============================================================
-with tab_doc:
-    st.markdown("""
-    <div class="doc-section">
-        <h3>A propos de cette application</h3>
-        <p>
-            Cette plateforme est le <strong>dashboard de monitoring</strong> du modele de scoring
-            credit developpe pour <strong>Home Credit</strong>. Elle permet aux equipes metier et
-            data science de suivre en temps reel le comportement du modele en production.
-        </p>
-        <p>
-            Le modele predit la <strong>probabilite de defaut de paiement</strong> d'un client
-            a partir de ses donnees financieres et comportementales. Si cette probabilite depasse
-            le seuil optimal (<strong>0.494</strong>), le credit est refuse.
-        </p>
-    </div>
-
-    <div class="doc-section">
-        <h3>Comment utiliser le dashboard</h3>
-        <ul>
-            <li><strong>Prediction</strong> : Testez le modele en temps reel. Entrez un identifiant
-            client existant ou saisissez des features manuellement pour obtenir une decision
-            instantanee (APPROVED / REFUSED) avec la probabilite de defaut et une jauge visuelle.</li>
-            <li><strong>Scores & Decisions</strong> : Visualisez la distribution des probabilites
-            predites, le taux de refus global, et le volume de predictions dans le temps.</li>
-            <li><strong>Performance API</strong> : Surveillez la latence de l'API (temps de reponse
-            moyen, P50, P95, max) pour detecter d'eventuelles degradations.</li>
-            <li><strong>Data Drift</strong> : Simulez et detectez le data drift en comparant les
-            donnees de production aux donnees de reference. Utilisez la sidebar pour configurer
-            le type de drift, l'intensite et le nombre d'echantillons.</li>
-            <li><strong>Modele</strong> : Consultez les parametres du modele, le seuil de decision,
-            les couts metier (FN/FP) et la configuration complete.</li>
-        </ul>
-    </div>
-
-    <div class="doc-section">
-        <h3>Qu'est-ce que le Data Drift ?</h3>
-        <p>
-            Le <strong>data drift</strong> (derive des donnees) se produit lorsque la distribution
-            statistique des donnees en production <strong>diverge significativement</strong> de celle
-            des donnees d'entrainement. C'est un phenomene naturel et inevitable en machine learning.
-        </p>
-        <p><strong>Causes courantes :</strong></p>
-        <ul>
-            <li><strong>Changement de population</strong> : nouveaux segments de clients, evolution
-            demographique, expansion geographique.</li>
-            <li><strong>Evolution economique</strong> : crise financiere, inflation, changement de
-            politique de credit.</li>
-            <li><strong>Probleme technique</strong> : bug dans le pipeline de donnees, changement de
-            format, feature manquante.</li>
-            <li><strong>Saisonnalite</strong> : comportements differents selon les periodes de l'annee.</li>
-        </ul>
-        <p><strong>Pourquoi c'est critique :</strong></p>
-        <p>
-            Un modele entraine sur des donnees de 2024 peut perdre en performance si les clients de
-            2025 ont un profil different. Sans monitoring, cette degradation passe inapercue et le
-            modele peut prendre des decisions inadaptees (accorder des credits risques ou refuser
-            des bons clients).
-        </p>
-    </div>
-
-    <div class="doc-section">
-        <h3>Comment on detecte le drift</h3>
-        <p>
-            Nous utilisons le <strong>test de Kolmogorov-Smirnov (KS)</strong> pour chaque feature.
-            Ce test statistique compare deux distributions et retourne :
-        </p>
-        <ul>
-            <li><strong>KS Statistic</strong> : mesure la distance maximale entre les deux
-            distributions cumulatives. Plus la valeur est elevee, plus le drift est important.</li>
-            <li><strong>p-value</strong> : probabilite que les deux echantillons proviennent de la
-            meme distribution. Si <code>p-value &lt; 0.05</code>, on considere que le drift est
-            statistiquement significatif.</li>
-        </ul>
-        <p>
-            L'onglet Data Drift permet de <strong>simuler</strong> differents types de drift
-            (graduel, soudain, shift de features) pour comprendre comment le monitoring reagit.
-            En production, ces metriques seraient calculees automatiquement sur les vraies donnees
-            entrantes.
-        </p>
-    </div>
-
-    <div class="doc-section">
-        <h3>Pourquoi monitorer un modele ML</h3>
-        <p>
-            Deployer un modele ne suffit pas. En production, il faut surveiller en continu :
-        </p>
-        <ul>
-            <li><strong>La qualite des predictions</strong> : le modele continue-t-il a bien predire ?</li>
-            <li><strong>La stabilite des donnees</strong> : les features en entree restent-elles coherentes
-            avec les donnees d'entrainement ?</li>
-            <li><strong>La performance technique</strong> : l'API repond-elle dans des delais acceptables ?</li>
-            <li><strong>Le volume d'utilisation</strong> : y a-t-il des pics anormaux ou des baisses
-            d'activite ?</li>
-        </ul>
-        <p>
-            Ce monitoring permet de detecter rapidement les problemes, de declencher un
-            <strong>re-entrainement</strong> du modele si necessaire, et de maintenir la confiance
-            des equipes metier dans le systeme de scoring.
-        </p>
-    </div>
-
-    <div class="doc-section">
-        <h3>Architecture technique</h3>
-        <ul>
-            <li><strong>Modele</strong> : LightGBM (Gradient Boosting) entraine sur 307k clients,
-            419 features, avec fonction de cout metier asymetrique (FN = 10x, FP = 1x).</li>
-            <li><strong>API</strong> : FastAPI (Python) servant les predictions via
-            <code>POST /predict</code>.</li>
-            <li><strong>Monitoring</strong> : Streamlit (ce dashboard) consommant les logs de
-            predictions et les donnees de reference.</li>
-            <li><strong>Detection du drift</strong> : Test KS (Kolmogorov-Smirnov) via SciPy,
-            avec simulation de drift pour demonstration.</li>
-            <li><strong>CI/CD</strong> : GitHub Actions (test, build Docker, deploy Render).</li>
-        </ul>
-    </div>
-    """, unsafe_allow_html=True)
