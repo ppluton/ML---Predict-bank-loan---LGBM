@@ -1,0 +1,187 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "Volume de prédictions par heure",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 },
+      "datasource": { "type": "postgres", "uid": "${DS_NEON_POSTGRESQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT date_trunc('hour', created_at) AS time, COUNT(*) AS predictions FROM predictions WHERE $__timeFilter(created_at) GROUP BY 1 ORDER BY 1",
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 20, "lineWidth": 2 }
+        }
+      }
+    },
+    {
+      "title": "Latence d'inférence (ms)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 0 },
+      "datasource": { "type": "postgres", "uid": "${DS_NEON_POSTGRESQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT date_trunc('hour', created_at) AS time, AVG(inference_time_ms) AS avg_latency, PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY inference_time_ms) AS p95_latency FROM predictions WHERE $__timeFilter(created_at) GROUP BY 1 ORDER BY 1",
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": { "fillOpacity": 10, "lineWidth": 2 }
+        }
+      }
+    },
+    {
+      "title": "Taux d'approbation (%)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 0 },
+      "datasource": { "type": "postgres", "uid": "${DS_NEON_POSTGRESQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT date_trunc('hour', created_at) AS time, AVG(CASE WHEN decision = 'APPROVED' THEN 100.0 ELSE 0.0 END) AS approval_rate FROM predictions WHERE $__timeFilter(created_at) GROUP BY 1 ORDER BY 1",
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "steps": [
+              { "color": "red", "value": 0 },
+              { "color": "yellow", "value": 50 },
+              { "color": "green", "value": 70 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Drift (%) au fil du temps",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "postgres", "uid": "${DS_NEON_POSTGRESQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT report_date AS time, drift_percentage, n_features_drifted, status FROM drift_reports ORDER BY report_date",
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": 0 },
+              { "color": "yellow", "value": 10 },
+              { "color": "red", "value": 30 }
+            ]
+          },
+          "custom": { "fillOpacity": 15, "lineWidth": 2 }
+        }
+      }
+    },
+    {
+      "title": "Dernier rapport de drift",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 8 },
+      "datasource": { "type": "postgres", "uid": "${DS_NEON_POSTGRESQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT drift_percentage AS \"Drift %\", n_features_drifted AS \"Features driftées\", n_predictions AS \"Prédictions analysées\" FROM drift_reports ORDER BY report_date DESC LIMIT 1",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": 0 },
+              { "color": "yellow", "value": 10 },
+              { "color": "red", "value": 30 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Status drift",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 8 },
+      "datasource": { "type": "postgres", "uid": "${DS_NEON_POSTGRESQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT status FROM drift_reports ORDER BY report_date DESC LIMIT 1",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "ok": { "text": "OK", "color": "green" }, "warning": { "text": "WARNING", "color": "yellow" }, "alert": { "text": "ALERT", "color": "red" } } }
+          ]
+        }
+      }
+    },
+    {
+      "title": "Logs API récents",
+      "type": "table",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "postgres", "uid": "${DS_NEON_POSTGRESQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT timestamp, event, level, message FROM api_logs ORDER BY timestamp DESC LIMIT 50",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "title": "Distribution des scores",
+      "type": "histogram",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "type": "postgres", "uid": "${DS_NEON_POSTGRESQL}" },
+      "targets": [
+        {
+          "rawSql": "SELECT probability, decision FROM predictions WHERE $__timeFilter(created_at)",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "fillOpacity": 80 }
+        }
+      }
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["mlops", "credit-scoring"],
+  "templating": {
+    "list": [
+      {
+        "name": "DS_NEON_POSTGRESQL",
+        "type": "datasource",
+        "query": "postgres",
+        "current": { "text": "Neon PostgreSQL", "value": "Neon PostgreSQL" }
+      }
+    ]
+  },
+  "time": { "from": "now-24h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "MLOps Credit Scoring - Monitoring",
+  "uid": "mlops-credit-scoring",
+  "version": 1
+}

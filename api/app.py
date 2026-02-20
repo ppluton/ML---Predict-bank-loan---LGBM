@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from fastapi import FastAPI
 
 from api.config import Settings
+from api.database import log_api_event_to_db, log_prediction_to_db
 from api.predict import CreditScoringModel
 from api.schemas import HealthResponse, PredictionRequest, PredictionResponse
 
@@ -68,7 +69,7 @@ def predict(request: PredictionRequest):
 
     elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
 
-    # Log de la prédiction
+    # Log en JSONL (backup fichier local)
     if app.state.settings.LOG_PREDICTIONS:
         _log_prediction(
             request.SK_ID_CURR,
@@ -76,6 +77,17 @@ def predict(request: PredictionRequest):
             result["prediction"],
             elapsed_ms,
         )
+
+    # Log en Postgres (inputs + outputs + temps d'exécution)
+    log_prediction_to_db(
+        sk_id_curr=request.SK_ID_CURR,
+        probability=result["probability"],
+        prediction=result["prediction"],
+        threshold=result["threshold"],
+        decision=result["decision"],
+        inference_time_ms=elapsed_ms,
+        features_dict=request.features,
+    )
 
     return PredictionResponse(
         SK_ID_CURR=request.SK_ID_CURR,
@@ -94,6 +106,13 @@ def model_info():
         "threshold": model.threshold,
         "metadata": model.metadata,
     }
+
+
+@app.post("/internal/logs")
+def ingest_log(payload: dict):
+    """Reçoit les logs de Fluentd et les stocke dans Postgres."""
+    success = log_api_event_to_db(payload)
+    return {"status": "ok" if success else "no_db"}
 
 
 def _log_event(event: str, **kwargs):

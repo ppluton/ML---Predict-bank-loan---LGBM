@@ -1,0 +1,28 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies required by LightGBM
+RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 && rm -rf /var/lib/apt/lists/*
+
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+# Copy dependency files first (cache layer)
+COPY pyproject.toml uv.lock ./
+
+# Install dependencies (production only)
+RUN uv sync --frozen --no-dev --no-install-project
+
+# Copy application code
+COPY api/ api/
+COPY src/ src/
+COPY artifacts/ artifacts/
+COPY monitoring/ monitoring/
+
+# Copy sample data as test_preprocessed.csv for the dashboard
+COPY data/test_sample.csv data/test_preprocessed.csv
+
+EXPOSE 8501
+
+CMD ["uv", "run", "streamlit", "run", "monitoring/dashboard.py", "--server.port", "8501", "--server.address", "0.0.0.0", "--server.headless", "true"]

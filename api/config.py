@@ -11,3 +11,4 @@ class Settings(BaseSettings):
     OPTIMAL_THRESHOLD: float = 0.494
     LOG_PREDICTIONS: bool = True
     PREDICTIONS_LOG_PATH: Path = Path("monitoring/predictions_log.jsonl")
+    DATABASE_URL: str = ""

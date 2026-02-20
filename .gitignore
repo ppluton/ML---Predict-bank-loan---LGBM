@@ -18,6 +18,7 @@ mlflow.db
 # Data (optionnel si gros fichiers)
 data/*.csv
 !data/sample_submission.csv
+!data/test_sample.csv
 data/*.pkl
 
 # Models
@@ -36,6 +37,9 @@ models/*.joblib
 
 # Exports
 export_OC_6/
+
+# Environment
+.env
 
 # OS
 .DS_Store

@@ -1,0 +1,13 @@
+apiVersion: 1
+datasources:
+  - name: Neon PostgreSQL
+    type: postgres
+    url: ${GF_DATASOURCE_URL}
+    database: neondb
+    user: ${GF_DATASOURCE_USER}
+    secureJsonData:
+      password: ${GF_DATASOURCE_PASSWORD}
+    jsonData:
+      sslmode: require
+      maxOpenConns: 5
+      postgresVersion: 1600

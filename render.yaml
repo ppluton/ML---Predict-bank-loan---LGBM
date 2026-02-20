@@ -1,0 +1,21 @@
+services:
+  # FastAPI backend — Credit Scoring API
+  - type: web
+    name: oc6-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+
+  # Streamlit frontend — Monitoring Dashboard
+  - type: web
+    name: oc6-dashboard
+    runtime: docker
+    dockerfilePath: ./Dockerfile.dashboard
+    plan: free
+    envVars:
+      - key: DATABASE_URL
+        sync: false

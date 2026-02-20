@@ -5,6 +5,16 @@ services:
       - "8000:8000"
     volumes:
       - ./monitoring/predictions_log.jsonl:/app/monitoring/predictions_log.jsonl
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+    logging:
+      driver: fluentd
+      options:
+        fluentd-address: localhost:24224
+        tag: docker.api
+        fluentd-async: "true"
+    depends_on:
+      - fluentd
 
   dashboard:
     build: .
@@ -16,3 +26,28 @@ services:
       - ./data/test_preprocessed.csv:/app/data/test_preprocessed.csv
     depends_on:
       - api
+
+  fluentd:
+    build: ./fluentd
+    ports:
+      - "24224:24224"
+      - "24224:24224/udp"
+    volumes:
+      - ./fluentd/fluent.conf:/fluentd/etc/fluent.conf
+
+  grafana:
+    image: grafana/grafana:11.0.0
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+      - grafana-data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_DATASOURCE_URL=${NEON_HOST}
+      - GF_DATASOURCE_USER=${NEON_USER}
+      - GF_DATASOURCE_PASSWORD=${NEON_PASSWORD}
+
+volumes:
+  grafana-data:
