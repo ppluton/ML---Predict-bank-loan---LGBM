@@ -19,3 +19,5 @@ services:
     envVars:
       - key: DATABASE_URL
         sync: false
+      - key: API_URL
+        value: https://oc6-api.onrender.com

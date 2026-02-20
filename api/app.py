@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from api.config import Settings
 from api.database import log_api_event_to_db, log_prediction_to_db
@@ -45,6 +46,17 @@ app = FastAPI(
     description="API de scoring crédit - Prédit le risque de défaut de paiement",
     version="1.0.0",
     lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://oc6-dashboard.onrender.com",
+        "http://localhost:8501",
+        "http://localhost:3000",
+    ],
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
 )
 
 

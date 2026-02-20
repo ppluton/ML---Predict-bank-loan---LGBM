@@ -1,6 +1,7 @@
 """Dashboard Streamlit de monitoring - Credit Scoring Platform."""
 
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -12,12 +13,39 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pandas as pd
 import plotly.graph_objects as go
+import psycopg2
 import streamlit as st
 
 from evidently import Report
 from evidently.presets import DataDriftPreset
 
 from monitoring.drift import compute_drift_report, simulate_drift
+
+
+def load_predictions_from_db() -> "pd.DataFrame | None":
+    """Lit les prédictions depuis PostgreSQL si DATABASE_URL est défini."""
+    db_url = os.environ.get("DATABASE_URL", "")
+    if not db_url:
+        return None
+    try:
+        conn = psycopg2.connect(db_url)
+        df = pd.read_sql(
+            """SELECT sk_id_curr AS "SK_ID_CURR",
+                      probability,
+                      prediction,
+                      decision,
+                      inference_time_ms,
+                      created_at AS "timestamp"
+               FROM predictions
+               ORDER BY created_at DESC
+               LIMIT 10000""",
+            conn,
+        )
+        conn.close()
+        return df if len(df) > 0 else None
+    except Exception:
+        return None
+
 
 # --- Configuration ---
 st.set_page_config(
@@ -622,7 +650,24 @@ with tab_predict:
         client_features = {}
 
         if input_mode == "Par identifiant client":
-            client_id = st.number_input("SK_ID_CURR", min_value=0, value=100001, step=1)
+            SAMPLE_CLIENT_IDS = [
+                100001, 100005, 100013, 100028, 100038,
+                100042, 100057, 100065, 100066, 100067,
+                100068, 100071, 100074, 100075, 100077,
+            ]
+            id_choice = st.selectbox(
+                "Identifiant client",
+                options=SAMPLE_CLIENT_IDS,
+                format_func=lambda x: f"Client #{x}",
+                help="15 clients pré-sélectionnés depuis le jeu de test",
+            )
+            use_custom = st.checkbox("Saisir un identifiant personnalisé")
+            if use_custom:
+                client_id = st.number_input(
+                    "SK_ID_CURR personnalisé", min_value=0, value=id_choice, step=1
+                )
+            else:
+                client_id = id_choice
             if REFERENCE_DATA.exists():
                 ref_full = pd.read_csv(REFERENCE_DATA, nrows=5000)
                 if "SK_ID_CURR" in ref_full.columns:
@@ -735,9 +780,12 @@ with tab_scores:
         "Le camembert resume la proportion globale, et la courbe temporelle permet de "
         "detecter des variations de volume inhabituelles."
     )
-    if PREDICTIONS_LOG.exists():
+    # Essai DB d'abord (prod), puis JSONL (local)
+    logs = load_predictions_from_db()
+    if logs is None and PREDICTIONS_LOG.exists():
         logs = pd.read_json(PREDICTIONS_LOG, lines=True)
 
+    if logs is not None:
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("Predictions", f"{len(logs):,}")
         col2.metric("Taux de refus", f"{logs['prediction'].mean():.1%}")
@@ -881,10 +929,11 @@ with tab_perf:
     )
     api_col, timeout_col = st.columns([3, 1])
     with api_col:
+        _default_api_url = os.environ.get("API_URL", "http://localhost:8000")
         api_base_url = st.text_input(
             "URL de l'API a monitorer",
-            value="http://localhost:8000",
-            help="Exemple: http://localhost:8000",
+            value=_default_api_url,
+            help="Configuré via la variable d'env API_URL",
         )
     with timeout_col:
         timeout_s = st.number_input(
@@ -1050,6 +1099,30 @@ with tab_drift:
                 "feature_shift": "Shift de features",
             }[x],
         )
+
+        DRIFT_EXPLANATIONS = {
+            "none": (
+                "**Aucun drift** — Les données simulées sont identiques aux données "
+                "d'entraînement. Le modèle devrait performer normalement."
+            ),
+            "gradual": (
+                "**Drift graduel** — Bruit gaussien progressivement ajouté sur toutes "
+                "les features. Simule une dérive lente et naturelle des données (vieillissement "
+                "du portefeuille, inflation, évolution des comportements)."
+            ),
+            "sudden": (
+                "**Drift soudain** — Décalage brutal sur les 20 features les plus "
+                "importantes. Simule un choc externe : nouvelle réglementation, crise "
+                "économique, changement de segment clientèle."
+            ),
+            "feature_shift": (
+                "**Shift de features** — Mise à l'échelle multiplicative sur des features "
+                "aléatoires. Simule un problème de collecte ou de transformation des données "
+                "(bug de pipeline, changement de source)."
+            ),
+        }
+        st.sidebar.info(DRIFT_EXPLANATIONS[drift_type])
+
         intensity = st.sidebar.slider("Intensite", 0.0, 1.0, 0.3, 0.05)
         n_samples = st.sidebar.slider("Echantillons", 100, 5000, 1000, 100)
 
