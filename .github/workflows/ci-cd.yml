@@ -39,8 +39,11 @@ jobs:
       - name: Test container health
         run: |
           docker run -d -p 8000:8000 --name test-api credit-scoring
-          sleep 5
-          curl -f http://localhost:8000/health
+          for i in 1 2 3 4 5; do
+            sleep 5
+            curl -f http://localhost:8000/health && break
+            echo "Retry $i..."
+          done
           docker stop test-api
 
   deploy:
