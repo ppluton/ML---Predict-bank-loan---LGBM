@@ -1,0 +1,15 @@
+{
+  "lgbm_mean_ms": 0.71,
+  "lgbm_p50_ms": 0.7,
+  "lgbm_p95_ms": 0.77,
+  "onnx_mean_ms": 0.01,
+  "onnx_p50_ms": 0.01,
+  "onnx_p95_ms": 0.01,
+  "speedup_mean": 57.7,
+  "speedup_p50": 58.1,
+  "speedup_p95": 60.9,
+  "pkl_size_mb": 1.12,
+  "onnx_size_mb": 0.71,
+  "delta_proba": 7.31e-08,
+  "bottleneck_df_pct": 23.0
+}

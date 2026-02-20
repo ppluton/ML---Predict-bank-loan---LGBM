@@ -996,9 +996,11 @@ with tab_perf:
         unsafe_allow_html=True,
     )
 
-    if PREDICTIONS_LOG.exists():
+    logs = load_predictions_from_db()
+    if logs is None and PREDICTIONS_LOG.exists():
         logs = pd.read_json(PREDICTIONS_LOG, lines=True)
 
+    if logs is not None:
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("Latence moyenne", f"{logs['inference_time_ms'].mean():.1f} ms")
         col2.metric("Latence P50", f"{logs['inference_time_ms'].median():.1f} ms")

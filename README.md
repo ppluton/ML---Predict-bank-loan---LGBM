@@ -35,6 +35,7 @@ Predict **loan default risk** for a microfinance institution (Home Credit Defaul
 | **CI/CD** | GitHub Actions (test → build → deploy) |
 | **Deployment** | Render (API + Dashboard) |
 | **Deps** | uv (astral-sh) with lockfile |
+| **Inference optimization** | ONNX Runtime (CPU), skl2onnx, onnxmltools |
 
 ---
 
@@ -45,7 +46,7 @@ Raw data (8 CSVs, 57M+ rows)
   → Hierarchical aggregation        307k clients × 305 features
   → Preprocessing + Feature Eng.    307k × 419 features, 0 NaN, scaled
   → MLflow modeling                 LightGBM, optimal threshold 0.494
-  → Export to artifacts/            model.pkl, scaler.pkl, feature_names.json
+  → Export to artifacts/            model.pkl, scaler.pkl, feature_names.json, model.onnx
   → FastAPI + Docker                /predict → probability + APPROVED/REFUSED
   → CI/CD GitHub Actions            test → build container → deploy to Render
 ```
@@ -61,7 +62,7 @@ OC6_MLOPS/
 ├── monitoring/             # Streamlit dashboard + drift detection
 ├── tests/                  # 19 pytest tests (API, prediction, drift)
 ├── src/                    # Reusable modules (metrics, data_processing)
-├── notebooks/              # 3-notebook pipeline (EDA → Preprocessing → Modeling)
+├── notebooks/              # 6-notebook pipeline (EDA → Preprocessing → Modeling → Inference Opt.)
 ├── scripts/                # Model export, demo data generation
 ├── fluentd/                # Docker log aggregation config
 ├── grafana/                # Provisioned dashboards + Neon datasource
@@ -100,6 +101,26 @@ OC6_MLOPS/
 - **Log pipeline**: Fluentd (Docker log driver) → API → Postgres → Grafana
 - **3-step CI/CD**: lint (ruff) + tests → Docker build + health check with retry → deploy to Render
 - **Docker Compose**: 4 services (API, Dashboard, Fluentd, Grafana)
+
+### Inference Optimization
+
+- **Profiling** (cProfile + timeit) : la construction du DataFrame pandas est le principal
+  goulot d'étranglement (23% de la latence LightGBM par appel), pas `predict_proba` lui-même
+- **Conversion ONNX** : modèle LightGBM exporté via onnxmltools, 419 features préservées,
+  tolérance numérique 7.3e-08 vs LightGBM natif (< 1e-4)
+- **Dual inference path** : l'API détecte `artifacts/model.onnx` au démarrage et bascule
+  automatiquement ; fallback LightGBM si absent — zéro breaking change
+- `_predict_onnx()` construit un numpy float32 array directement (sans DataFrame pandas)
+- **Résultats** (500 runs, inference single-row) :
+
+| Engine        | Mean (ms) | P50 (ms) | P95 (ms) | Artefact  |
+|---------------|-----------|----------|----------|-----------|
+| LightGBM      | 0.71      | 0.70     | 0.77     | 1.12 MB   |
+| ONNX Runtime  | 0.01      | 0.01     | 0.01     | 0.71 MB   |
+| **Speedup**   | **57.7x** | **58.1x**| **60.9x**| —         |
+
+- Notebook : `notebooks/06_inference_optimization.ipynb`
+- Artefact : `artifacts/model.onnx`
 
 ---
 
@@ -159,6 +180,7 @@ curl -X POST http://localhost:8000/predict \
 - **Automated CI/CD** (GitHub Actions: test → build → deploy)
 - **Cloud deployment** (Render, Neon serverless Postgres)
 - **Automated testing** (19 pytest tests: API, inference, drift)
+- **Inference optimization** (ONNX export, onnxruntime CPU, profiling cProfile/timeit, benchmark P50/P95, 57x speedup)
 
 ---
 
