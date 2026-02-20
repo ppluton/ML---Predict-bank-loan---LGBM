@@ -4,6 +4,7 @@
 __pycache__/
 *.pyc
 data/
+!data/test_sample.csv
 notebooks/
 mlartifacts/
 mlruns/
