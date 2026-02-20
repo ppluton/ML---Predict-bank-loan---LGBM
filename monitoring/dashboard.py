@@ -648,6 +648,7 @@ with tab_predict:
         )
 
         client_features = {}
+        client_id = 0
 
         if input_mode == "Par identifiant client":
             SAMPLE_CLIENT_IDS = [
@@ -710,16 +711,45 @@ with tab_predict:
 
     with col_result:
         if predict_btn and client_features:
-            model, feature_names = load_model()
+            _api_url = os.environ.get("API_URL", "http://localhost:8000").rstrip("/")
+            sk_id = client_id if input_mode == "Par identifiant client" else 0
 
-            start = time.perf_counter()
-            df = pd.DataFrame([client_features])
-            df = df.reindex(columns=feature_names, fill_value=0)
-            proba = float(model.predict_proba(df)[:, 1][0])
-            elapsed_ms = (time.perf_counter() - start) * 1000
+            api_used = False
+            try:
+                import json as _json
+                from urllib.request import Request as _Req, urlopen as _urlopen
 
-            prediction = int(proba >= THRESHOLD)
-            decision = "REFUSED" if prediction == 1 else "APPROVED"
+                _payload = _json.dumps(
+                    {"SK_ID_CURR": sk_id, "features": client_features}
+                ).encode()
+                _req = _Req(
+                    url=f"{_api_url}/predict",
+                    data=_payload,
+                    method="POST",
+                    headers={"Content-Type": "application/json"},
+                )
+                with _urlopen(_req, timeout=5) as _resp:  # nosec: B310
+                    _result = _json.loads(_resp.read().decode())
+                proba = _result["probability"]
+                elapsed_ms = _result["inference_time_ms"]
+                prediction = _result["prediction"]
+                decision = _result["decision"]
+                api_used = True
+            except Exception:
+                # Fallback: inférence locale si l'API est indisponible
+                model, feature_names = load_model()
+                start = time.perf_counter()
+                df = pd.DataFrame([client_features])
+                df = df.reindex(columns=feature_names, fill_value=0)
+                proba = float(model.predict_proba(df)[:, 1][0])
+                elapsed_ms = (time.perf_counter() - start) * 1000
+                prediction = int(proba >= THRESHOLD)
+                decision = "REFUSED" if prediction == 1 else "APPROVED"
+
+            if not api_used:
+                st.warning(
+                    f"API indisponible sur {_api_url} — inférence locale (prédiction non enregistrée)."
+                )
             color = COLORS["danger"] if prediction == 1 else COLORS["success"]
             css_class = "result-refused" if prediction == 1 else "result-approved"
 
