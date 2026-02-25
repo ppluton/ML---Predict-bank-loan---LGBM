@@ -3,6 +3,7 @@
 import json
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 from urllib.error import URLError
@@ -20,6 +21,34 @@ from evidently import Report
 from evidently.presets import DataDriftPreset
 
 from monitoring.drift import compute_drift_report, simulate_drift
+
+
+def _start_api_keepalive():
+    """Pinge l'API toutes les 10 minutes pour éviter le cold start (Render free tier)."""
+    api_url = os.environ.get("API_URL", "http://localhost:8000").rstrip("/")
+
+    def _ping():
+        while True:
+            time.sleep(600)  # 10 minutes
+            try:
+                req = Request(url=f"{api_url}/health", method="GET")
+                with urlopen(req, timeout=5) as resp:  # nosec: B310
+                    resp.read()
+            except Exception:
+                pass
+
+    t = threading.Thread(target=_ping, daemon=True)
+    t.start()
+
+
+@st.cache_resource
+def _keepalive_started():
+    """Démarre le keep-alive une seule fois par instance Streamlit."""
+    _start_api_keepalive()
+    return True
+
+
+_keepalive_started()
 
 
 def load_predictions_from_db() -> "pd.DataFrame | None":
